@@ -259,6 +259,16 @@ if ! check_installed "Cowrie" "systemctl is-active --quiet cowrie"; then
 
     deactivate
 
+    # Cowrie 用户和权限配置
+    echo "创建 Cowrie 用户..."
+    if ! id cowrie &>/dev/null; then
+        useradd -r -s /bin/false cowrie
+    fi
+
+    echo "设置目录权限..."
+    chown -R cowrie:cowrie "$COWRIE_INSTALL_DIR"
+    chmod -R 755 "$COWRIE_INSTALL_DIR"
+
     # 配置 Cowrie 服务
     echo "配置 Cowrie 服务..."
     cat <<EOF > /etc/systemd/system/cowrie.service
@@ -267,11 +277,15 @@ Description=Cowrie SSH Honeypot
 After=network.target
 
 [Service]
-User=root
+Type=forking
+User=cowrie
+Group=cowrie
 WorkingDirectory=$COWRIE_INSTALL_DIR
+Environment=PATH=$COWRIE_INSTALL_DIR/cowrie-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=$COWRIE_INSTALL_DIR/cowrie-env/bin/cowrie start
 ExecStop=$COWRIE_INSTALL_DIR/cowrie-env/bin/cowrie stop
-Restart=always
+Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
@@ -500,9 +514,18 @@ check_service() {
 
         echo "尝试启动 $service_name 服务..."
         systemctl start "$service_name"
-        sleep 2
+        sleep 5  # 增加等待时间
         
-        if systemctl is-active --quiet "$service_name"; then
+        # 检查服务状态和日志
+        if ! systemctl is-active --quiet "$service_name"; then
+            echo "===== $service_name 服务状态 ====="
+            systemctl status "$service_name"
+            echo "===== $service_name 日志详情 ====="
+            if [ "$service_name" = "cowrie" ]; then
+                tail -n 50 "$COWRIE_INSTALL_DIR/var/log/cowrie/cowrie.log" 2>/dev/null || echo "无法读取 Cowrie 日志"
+            fi
+            journalctl -u "$service_name" --no-pager -n 50
+        else
             echo "$service_name 服务已成功启动"
             return 0
         fi
@@ -511,8 +534,6 @@ check_service() {
     done
 
     echo "警告: $service_name 服务启动失败"
-    echo "===== $service_name 服务日志 ====="
-    journalctl -u "$service_name" --no-pager -n 20
     SERVICE_CHECK_FAILED=true
     return 1
 }
