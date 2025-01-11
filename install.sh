@@ -58,6 +58,13 @@ check_installed() {
     return 1
 }
 
+# 添加 Python 版本检测函数（在函数定义部分）
+get_python_version() {
+    local py_version
+    py_version=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
+    echo "$py_version"
+}
+
 # 变量定义
 COWRIE_INSTALL_DIR="/opt/cowrie"
 LOG_RETENTION_DAYS=30
@@ -264,8 +271,9 @@ if [ "$COWRIE_INSTALLED" = "false" ]; then
     chmod 700 "$COWRIE_INSTALL_DIR/var/log/cowrie"
 fi
 
-# 配置 systemd 服务
+# 配置 Cowrie 服务
 echo "配置 Cowrie 服务..."
+PYTHON_VERSION=$(get_python_version)
 cat <<EOF > /etc/systemd/system/cowrie.service
 [Unit]
 Description=Cowrie SSH Honeypot
@@ -276,7 +284,7 @@ Type=simple
 User=cowrie
 Group=cowrie
 WorkingDirectory=$COWRIE_INSTALL_DIR
-Environment="PYTHONPATH=$COWRIE_INSTALL_DIR/cowrie-env/lib/python3.9/site-packages"
+Environment="PYTHONPATH=$COWRIE_INSTALL_DIR/cowrie-env/lib/python${PYTHON_VERSION}/site-packages"
 Environment="PATH=$COWRIE_INSTALL_DIR/cowrie-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ExecStart=/bin/bash -c 'cd $COWRIE_INSTALL_DIR && source cowrie-env/bin/activate && bin/cowrie start -n'
 Restart=always
@@ -567,14 +575,27 @@ print_info() {
     echo -e "\033[1;36m➜ $1\033[0m"
 }
 
+# 修改获取当前 SSH 端口的函数
+get_current_ssh_port() {
+    # 优先使用脚本中设置的新端口
+    if [ -n "$NEW_SSH_PORT" ]; then
+        echo "$NEW_SSH_PORT"
+        return
+    fi
+    # 否则从配置文件读取
+    local port=$(grep -E "^Port\s+" /etc/ssh/sshd_config | awk '{print $2}')
+    echo "${port:-22}"
+}
+
 # 最终配置总结
 clear
 print_header "Backtrance 安装完成"
 echo "安装时间: $(date '+%Y-%m-%d %H:%M:%S')"
 
 print_header "SSH 配置信息"
+FINAL_SSH_PORT=$(get_current_ssh_port)
 echo "当前 SSH 配置："
-print_info "端口: ${NEW_SSH_PORT:-$(grep -E "^Port\s+" /etc/ssh/sshd_config | awk '{print $2}' || echo "22")}"
+print_info "端口: $FINAL_SSH_PORT"
 print_info "密码认证: $(grep "^PasswordAuthentication" /etc/ssh/sshd_config | awk '{print $2}' || echo "yes")"
 print_info "密钥认证: $(grep "^PubkeyAuthentication" /etc/ssh/sshd_config | awk '{print $2}' || echo "yes")"
 if [ -f "/root/.ssh/authorized_keys" ]; then
@@ -619,7 +640,7 @@ fi
 
 print_header "重要提示"
 echo "1. 请确保记录以下信息："
-print_info "SSH 端口: ${NEW_SSH_PORT:-22}"
+print_info "SSH 端口: $FINAL_SSH_PORT"
 [ -n "$TEMP_KEY_FILE" ] && print_info "SSH 私钥位置: $TEMP_KEY_FILE"
 echo "2. 确保防火墙规则正确配置"
 echo "3. 测试新的 SSH 配置前不要关闭当前会话"

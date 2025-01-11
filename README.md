@@ -14,12 +14,7 @@ bash <(curl -sL https://raw.githubusercontent.com/CurtisLu1/backtrace/main/insta
 
 - Debian/Ubuntu 系统
 - Root 权限
-- Python 3.x（如遇兼容性问题会自动安装 Python 3.7）
-
-### 常见问题
-
-#### Python 依赖问题
-如果安装过程中遇到 Python 相关的依赖错误，脚本会自动安装兼容版本的 Python 3.7 来解决此问题。这不会影响您系统中的其他 Python 程序。
+- Python 3.x（自动适配当前系统版本）
 
 ## 功能特点
 
@@ -31,91 +26,127 @@ bash <(curl -sL https://raw.githubusercontent.com/CurtisLu1/backtrace/main/insta
 - SSH 安全配置（可选）：
   - 端口配置：
     - 默认保持现有配置
-    - 可选随机端口或自定义
+    - 随机生成（10000-65535）
+    - 手动指定（1024-65535）
   - 认证方式：
-    - 默认保持现有配置
-    - 可选仅密钥或密码+密钥
+    - 保持现有配置
+    - 仅密钥认证
+    - 密码+密钥认证
   - 密钥管理：
     - 保持现有密钥
-    - 自动生成新密钥
-    - 导入已有公钥
+    - 导入新公钥
+    - 自动生成新密钥对
 - UFW 防火墙配置（可选）：
-  - 自动配置必要端口
-  - 确保安全访问
+  - 自动配置必需端口（SSH和蜜罐）
+  - 智能规则管理（自动处理端口变更）
 
-## 安装后配置
+## 安装过程
 
-1. Cowrie 蜜罐运行在端口 2222
-2. Fail2ban 配置：
-   - 封禁时间：24小时
-   - 检测窗口：5分钟
-   - 最大重试：3次
-3. SSH 安全配置：
-   - 默认保持系统现有配置
-   - 可选配置项：
-     - SSH 端口修改
-     - 认证方式调整
-     - 密钥管理
-4. 防火墙配置：
-   - 自动配置 SSH 端口
-   - 自动配置蜜罐端口
-   - 确保服务可访问
+1. 环境检查：
+   - 系统兼容性验证
+   - Python 环境检测
+   - 必需命令检查
+2. 依赖安装：
+   - fail2ban
+   - Python virtualenv
+   - 其他必需包
+3. 组件配置：
+   - Cowrie 蜜罐（端口 2222）
+   - Fail2ban 防护
+   - 日志清理（每日凌晨2点）
+4. 安全配置：
+   - SSH 端口配置
+   - 认证方式设置
+   - 密钥管理
+   - 防火墙规则
 
-> **重要提示**: 安装完成后，请注意：
-> - 如果修改了 SSH 配置：
->   1. 确保记录新的 SSH 端口
->   2. 确保保存任何新生成的密钥
->   3. 测试新配置是否可用
-> - 如果启用了防火墙：
->   1. 确保必要端口已开放
->   2. 测试远程访问是否正常
+## 配置说明
 
-## 日志位置
+### Fail2ban 配置
+- 封禁时间：24小时（86400秒）
+- 检测窗口：5分钟（300秒）
+- 最大重试：3次
+- 监控日志：auth.log 和 cowrie.log
 
+### SSH 配置选项
+- 端口选择：
+  - 保持现有端口
+  - 随机端口（10000-65535）
+  - 手动指定（1024-65535）
+- 认证方式：
+  - 保持现有配置
+  - 仅密钥认证
+  - 密码+密钥认证
+- 密钥选项：
+  - 保持现有密钥
+  - 导入新公钥
+  - 生成新密钥对（4096位 RSA）
+
+### 防火墙设置
+- 自动配置 SSH 端口
+- 自动配置蜜罐端口（2222）
+- 智能规则管理
+- 可选启用 UFW
+
+## 日志管理
+
+### 日志位置
 - Cowrie 日志：`/opt/cowrie/var/log/cowrie/`
+- Fail2ban 日志：`/var/log/fail2ban.log`
 - 系统日志：`/var/log/`
 - 清理日志：`/var/log/cleanup.log`
+
+### 日志轮转
+- 每周轮转
+- 保留4个版本
+- 自动压缩
+- 自动清理30天前的日志
 
 ## 服务管理
 
 ```bash
-# 查看服务状态
+# 状态查看
 systemctl status cowrie
 systemctl status fail2ban
+ufw status
 
-# 重启服务
-systemctl restart cowrie
-systemctl restart fail2ban
+# 日志查看
+tail -f /opt/cowrie/var/log/cowrie/cowrie.log
+journalctl -u cowrie -f
+tail -f /var/log/fail2ban.log
+
+# 服务控制
+systemctl start|stop|restart cowrie
+systemctl start|stop|restart fail2ban
 ```
 
-## 安全提示
+## 安全建议
 
-请在生产环境部署前：
-1. 修改默认配置
-2. 确保防火墙配置正确：
-   - 如果使用 UFW：确保 SSH 端口和蜜罐端口(2222)已开放
-   - 如果未安装防火墙：强烈建议安装并配置
-   ```bash
-   # 安装和配置 UFW
-   apt install ufw
-   ufw allow <SSH端口>/tcp
-   ufw allow 2222/tcp
-   ufw enable
-   
-   # 检查配置
-   ufw status
-   ```
-3. 定期检查系统日志
+1. 安装完成后：
+   - 保存显示的 SSH 端口号
+   - 备份生成的 SSH 密钥（如果有）
+   - 测试新配置前保留当前会话
+2. 防火墙配置：
+   - 确保必要端口已开放
+   - 建议启用 UFW
+   - 定期检查防火墙规则
+3. 日常维护：
+   - 定期检查系统日志
+   - 监控蜜罐日志
+   - 及时更新系统
 
-## 卸载
-
-如需卸载，请运行以下命令：
+## 卸载方法
 
 ```bash
+# 停止服务
 systemctl stop cowrie
 systemctl disable cowrie
+
+# 删除文件
 rm -rf /opt/cowrie
 rm /etc/systemd/system/cowrie.service
+
+# 重载服务
 systemctl daemon-reload
 ```
 
@@ -123,7 +154,7 @@ systemctl daemon-reload
 
 MIT License
 
-Copyright (c) 2024
+Copyright (c) 2025
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -143,6 +174,18 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## 贡献
+## 贡献指南
 
-欢迎提交 Issue 和 Pull Request！
+欢迎通过以下方式贡献：
+- 提交 Issue
+- 提交 Pull Request
+- 完善文档
+- 分享使用经验
+
+## 问题反馈
+
+如遇问题，请提供以下信息：
+1. 系统版本
+2. Python 版本
+3. 错误信息
+4. 相关日志
