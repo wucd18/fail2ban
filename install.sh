@@ -147,6 +147,117 @@ EOF
 
 sudo systemctl restart fail2ban
 
+# 添加 SSH 安全配置函数（在最后的服务状态检查之前添加）
+echo "配置 SSH 安全选项..."
+
+# SSH 端口配置
+echo "SSH 端口配置："
+echo "1) 随机生成端口 (10000-65535)"
+echo "2) 手动指定端口"
+read -p "请选择 [1/2]: " PORT_CHOICE
+
+case $PORT_CHOICE in
+    1)
+        NEW_SSH_PORT=$((RANDOM % 55535 + 10000))
+        echo "已随机生成 SSH 端口: $NEW_SSH_PORT"
+        ;;
+    2)
+        while true; do
+            read -p "请输入要使用的 SSH 端口 (1024-65535): " NEW_SSH_PORT
+            if [[ "$NEW_SSH_PORT" =~ ^[0-9]+$ ]] && [ "$NEW_SSH_PORT" -ge 1024 ] && [ "$NEW_SSH_PORT" -le 65535 ]; then
+                # 检查端口是否被占用
+                if ! netstat -tuln | grep ":$NEW_SSH_PORT " > /dev/null; then
+                    break
+                else
+                    echo "错误：端口 $NEW_SSH_PORT 已被占用，请选择其他端口"
+                fi
+            else
+                echo "错误：请输入 1024-65535 之间的有效端口号"
+            fi
+        done
+        ;;
+    *)
+        echo "无效的选择！"
+        exit 1
+        ;;
+esac
+
+# 备份 SSH 配置
+cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+
+# 配置 SSH 端口
+sed -i "s/^#Port 22/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
+sed -i "s/^Port 22/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
+
+# SSH 密钥配置
+echo "SSH 密钥配置："
+echo "1) 自动生成新的 SSH 密钥对"
+echo "2) 使用现有公钥（需要手动输入）"
+read -p "请选择 [1/2]: " KEY_CHOICE
+
+# 备份 SSH 配置
+cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+
+# 禁用密码登录
+sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+
+# 启用密钥认证
+sed -i 's/^#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+sed -i 's/^PubkeyAuthentication no/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+
+# 配置 SSH 密钥
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+
+case $KEY_CHOICE in
+    1)
+        # 自动生成密钥对
+        SSH_KEY_FILE="/root/.ssh/id_rsa"
+        ssh-keygen -t rsa -b 4096 -f "$SSH_KEY_FILE" -N ""
+        cat "${SSH_KEY_FILE}.pub" >> /root/.ssh/authorized_keys
+        
+        # 保存私钥到临时文件
+        TEMP_KEY_FILE="/tmp/ssh_key_$(date +%s).txt"
+        cat "$SSH_KEY_FILE" > "$TEMP_KEY_FILE"
+        chmod 600 "$TEMP_KEY_FILE"
+        
+        echo "=========================="
+        echo "SSH 密钥已自动生成！"
+        echo "私钥已保存到: ${TEMP_KEY_FILE}"
+        echo "请立即保存私钥并删除临时文件！"
+        echo "=========================="
+        ;;
+    2)
+        # 手动输入公钥
+        echo "请输入您的 SSH 公钥（以 ssh-rsa 开头的完整内容）："
+        read -r PUBKEY
+        
+        if [[ $PUBKEY == ssh-rsa* ]]; then
+            echo "$PUBKEY" >> /root/.ssh/authorized_keys
+            echo "公钥已成功添加！"
+        else
+            echo "错误：无效的公钥格式！"
+            exit 1
+        fi
+        ;;
+    *)
+        echo "无效的选择！"
+        exit 1
+        ;;
+esac
+
+chmod 600 /root/.ssh/authorized_keys
+
+# 重启 SSH 服务
+systemctl restart sshd
+
+echo "=========================="
+echo "SSH 安全配置完成！"
+echo "新的 SSH 端口: ${NEW_SSH_PORT}"
+echo "密码认证已禁用，仅允许密钥登录"
+echo "=========================="
+
 # 检查服务状态
 if systemctl is-active --quiet cowrie && systemctl is-active --quiet fail2ban; then
     echo "所有组件安装完成！Fail2Ban 和 Cowrie 蜜罐服务已成功启动。"
