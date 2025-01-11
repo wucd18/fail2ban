@@ -14,7 +14,10 @@ bash <(curl -sL https://raw.githubusercontent.com/CurtisLu1/backtrace/main/insta
 
 - Debian/Ubuntu 系统
 - Root 权限
-- Python 3.x（自动适配当前系统版本）
+- Python 3.9+ (如果系统 Python 版本低于 3.9，将自动升级)
+  - Debian 10: 通过 backports 源安装
+  - Debian 11/12: 通过官方源安装
+  - Ubuntu: 通过 deadsnakes PPA 安装
 
 ## 功能特点
 

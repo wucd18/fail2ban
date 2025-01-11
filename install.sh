@@ -135,6 +135,57 @@ EOF
 echo "检查系统软件源..."
 update_sources
 
+# 添加 Python 版本检测函数
+check_python_version() {
+    local current_version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    if [ "$(echo "$current_version < 3.9" | bc -l)" -eq 1 ]; then
+        echo "当前 Python 版本 ($current_version) 低于要求的 3.9"
+        return 1
+    fi
+    return 0
+}
+
+# 添加 Python 升级函数
+upgrade_python() {
+    local os_id=$(. /etc/os-release && echo "$ID")
+    local os_version=$(. /etc/os-release && echo "$VERSION_ID")
+    
+    case "$os_id" in
+        "debian")
+            case "$os_version" in
+                "10")
+                    echo "deb http://deb.debian.org/debian buster-backports main" > /etc/apt/sources.list.d/backports.list
+                    apt update
+                    apt -t buster-backports install -y python3.9 python3.9-dev python3.9-venv
+                    ;;
+                "11"|"12")
+                    apt update
+                    apt install -y python3.9 python3.9-dev python3.9-venv
+                    ;;
+            esac
+            ;;
+        "ubuntu")
+            add-apt-repository -y ppa:deadsnakes/ppa
+            apt update
+            apt install -y python3.9 python3.9-dev python3.9-venv
+            ;;
+    esac
+    
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1
+}
+
+# 在环境检查后添加 Python 版本检查
+echo "检查 Python 版本要求..."
+if ! check_python_version; then
+    echo "正在升级 Python..."
+    upgrade_python
+    if ! check_python_version; then
+        echo "Python 版本升级失败"
+        exit 1
+    fi
+    echo "Python 已成功升级到 3.9+"
+fi
+
 # 系统依赖安装和 Python 环境检查
 echo "安装依赖..."
 apt install -y fail2ban python3-virtualenv git curl netstat-nat || {
