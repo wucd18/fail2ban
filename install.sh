@@ -517,20 +517,28 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
             ;;
         1)
             echo "配置仅使用密钥认证..."
-            # 确保先启用密钥认证
-            sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+            # 备份原配置
+            cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak.$(date +%s)
             
-            # 禁用密码认证 - 修改所有可能的配置
-            sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
-            sed -i 's/^#\?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' /etc/ssh/sshd_config
-            sed -i 's/^#\?UsePAM.*/UsePAM yes/' /etc/ssh/sshd_config
+            # 移除所有相关的认证配置行
+            sed -i '/^#\?PasswordAuthentication/d' /etc/ssh/sshd_config
+            sed -i '/^#\?PubkeyAuthentication/d' /etc/ssh/sshd_config
+            sed -i '/^#\?ChallengeResponseAuthentication/d' /etc/ssh/sshd_config
+            sed -i '/^#\?PermitRootLogin/d' /etc/ssh/sshd_config
+            sed -i '/^#\?AuthenticationMethods/d' /etc/ssh/sshd_config
+            sed -i '/^#\?UsePAM/d' /etc/ssh/sshd_config
             
-            # 添加或更新关键安全配置
-            if ! grep -q "^AuthenticationMethods" /etc/ssh/sshd_config; then
-                echo "AuthenticationMethods publickey" >> /etc/ssh/sshd_config
-            else
-                sed -i 's/^#\?AuthenticationMethods.*/AuthenticationMethods publickey/' /etc/ssh/sshd_config
-            fi
+            # 添加新的配置（在文件末尾）
+            cat >> /etc/ssh/sshd_config <<EOF
+
+# 安全配置 - $(date '+%Y-%m-%d %H:%M:%S')
+PasswordAuthentication no
+PubkeyAuthentication yes
+ChallengeResponseAuthentication no
+PermitRootLogin prohibit-password
+AuthenticationMethods publickey
+UsePAM yes
+EOF
 
             # 密钥配置选项
             echo "SSH 密钥配置："
@@ -566,7 +574,7 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
             echo "测试 SSH 配置..."
             if ! sshd -t; then
                 echo "SSH 配置测试失败，恢复默认配置"
-                sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+                mv /etc/ssh/sshd_config.bak.$(date +%s) /etc/ssh/sshd_config
                 systemctl restart sshd
                 exit 1
             fi
@@ -575,11 +583,22 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
             systemctl restart sshd
 
             # 验证配置
-            if grep -q "^PasswordAuthentication yes" /etc/ssh/sshd_config; then
-                echo "警告：密码认证仍然启用，配置可能未生效"
+            echo "验证 SSH 配置..."
+            if grep -q "^PasswordAuthentication yes" /etc/ssh/sshd_config || \
+               ! grep -q "^PasswordAuthentication no" /etc/ssh/sshd_config || \
+               ! grep -q "^PubkeyAuthentication yes" /etc/ssh/sshd_config || \
+               ! grep -q "^AuthenticationMethods publickey" /etc/ssh/sshd_config; then
+                echo "警告：SSH 配置可能未正确应用"
                 echo "当前 SSH 配置状态："
                 grep -E "^(PasswordAuthentication|PubkeyAuthentication|AuthenticationMethods)" /etc/ssh/sshd_config
-                exit 1
+                echo "是否继续？[y/N]: "
+                read -r CONTINUE
+                if [[ ! $CONTINUE =~ ^[Yy]$ ]]; then
+                    echo "恢复原始配置..."
+                    mv /etc/ssh/sshd_config.bak.$(date +%s) /etc/ssh/sshd_config
+                    systemctl restart sshd
+                    exit 1
+                fi
             fi
 
             echo "SSH 配置更新完成：仅允许密钥认证"
