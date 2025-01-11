@@ -112,16 +112,21 @@ apt upgrade -y
 apt install -y fail2ban python3-virtualenv git curl netstat-nat
 
 # Fail2ban 配置
-echo "配置 fail2ban..."
-backup_config "/etc/fail2ban/jail.local" || {
-    echo "备份 fail2ban 配置失败"
-    exit 1
-}
+echo "====开始配置 fail2ban===="
 
-cat > /etc/fail2ban/jail.local <<'EOF' || {
-    echo "写入 fail2ban 配置失败"
-    exit 1
-}
+# 备份配置
+echo "1. 备份 fail2ban 配置..."
+if [ -f /etc/fail2ban/jail.local ]; then
+    cp /etc/fail2ban/jail.local /etc/fail2ban/jail.local.bak.$(date +%s) || {
+        echo "错误：无法备份 fail2ban 配置文件"
+        exit 1
+    }
+    echo "备份完成：/etc/fail2ban/jail.local.bak.$(date +%s)"
+fi
+
+# 写入新配置
+echo "2. 写入新配置..."
+if ! cat > /etc/fail2ban/jail.local <<'EOF'
 [DEFAULT]
 bantime = 86400
 findtime = 300
@@ -132,14 +137,37 @@ action = %(action_)s
 enabled = true
 logpath = /var/log/auth.log
 EOF
-
-echo "重启 fail2ban 服务..."
-systemctl restart fail2ban || {
-    echo "fail2ban 服务重启失败"
+then
+    echo "错误：无法写入 fail2ban 配置文件"
     exit 1
-}
+fi
+echo "配置文件写入成功"
 
-echo "fail2ban 配置完成"
+# 测试配置
+echo "3. 测试配置文件..."
+if ! fail2ban-client -t; then
+    echo "错误：fail2ban 配置测试失败"
+    exit 1
+fi
+echo "配置文件测试通过"
+
+# 重启服务
+echo "4. 重启 fail2ban 服务..."
+if ! systemctl restart fail2ban; then
+    echo "错误：fail2ban 服务重启失败"
+    journalctl -u fail2ban --no-pager -n 50
+    exit 1
+fi
+
+# 检查服务状态
+echo "5. 检查服务状态..."
+if ! systemctl is-active --quiet fail2ban; then
+    echo "错误：fail2ban 服务未能正常启动"
+    systemctl status fail2ban
+    exit 1
+fi
+
+echo "====fail2ban 配置完成===="
 
 # 日志清理脚本
 echo "创建日志清理脚本..."
