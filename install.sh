@@ -473,11 +473,12 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
         echo "当前防火墙状态: $ufw_status"
         
         # 检查新 SSH 端口规则
-        local port_status=$(check_ufw_rule "$NEW_SSH_PORT" "SSH"; echo $?)
-        if [ $port_status -eq 1 ]; then
+        check_ufw_rule "$NEW_SSH_PORT" "SSH"
+        local port_status=$?
+        if [ "$port_status" -eq 1 ]; then
             echo "添加新 SSH 端口 $NEW_SSH_PORT 到防火墙规则..."
             ufw allow "$NEW_SSH_PORT"/tcp comment 'SSH'
-        elif [ $port_status -eq 2 ]; then
+        elif [ "$port_status" -eq 2 ]; then
             echo "端口 $NEW_SSH_PORT 已存在其他规则，添加新规则..."
             ufw allow "$NEW_SSH_PORT"/tcp comment 'SSH'
         else
@@ -499,11 +500,12 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
         fi
         
         # 检查蜜罐端口规则
-        local honeypot_status=$(check_ufw_rule "2222" "Cowrie"; echo $?)
-        if [ $honeypot_status -eq 1 ]; then
+        check_ufw_rule "2222" "Cowrie"
+        local honeypot_status=$?
+        if [ "$honeypot_status" -eq 1 ]; then
             echo "添加蜜罐端口到防火墙规则..."
             ufw allow 2222/tcp comment 'Cowrie Honeypot'
-        elif [ $honeypot_status -eq 2 ]; then
+        elif [ "$honeypot_status" -eq 2 ]; then
             echo "警告: 端口 2222 已有其他规则，可能会影响蜜罐功能"
             read -p "是否添加新规则？[Y/n]: " -r ADD_HONEYPOT_RULE
             ADD_HONEYPOT_RULE=${ADD_HONEYPOT_RULE:-y}
