@@ -572,6 +572,7 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
 
     # 防火墙配置
     setup_firewall() {
+        echo "开始设置防火墙规则..."
         command -v ufw >/dev/null 2>&1 || {
             echo "未检测到 UFW 防火墙"
             return 0
@@ -646,9 +647,14 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
         # 显示最终配置
         echo -e "\n当前防火墙状态和规则："
         ufw status verbose
+        
+        echo "防火墙配置完成"
+        return 0
     }
 
-    setup_firewall
+    # 调用防火墙配置函数并确保继续执行
+    setup_firewall || true
+    echo "继续执行后续配置..."
 
     # 如果端口已更改，则更新 SSH 配置
     if [ "$NEW_SSH_PORT" != "$CURRENT_SSH_PORT" ]; then
