@@ -138,11 +138,14 @@ update_sources
 # 添加 Python 版本检测函数
 check_python_version() {
     local current_version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-    if [ "$(echo "$current_version < 3.9" | bc -l)" -eq 1 ]; then
+    # 使用 awk 进行版本比较，避免 bc 可能出现的浮点数比较问题
+    if echo "3.9 $current_version" | awk '{if($2>=$1) exit 0; else exit 1}'; then
+        echo "当前 Python 版本 ($current_version) 满足要求"
+        return 0
+    else
         echo "当前 Python 版本 ($current_version) 低于要求的 3.9"
         return 1
     fi
-    return 0
 }
 
 # 添加 Python 升级函数
