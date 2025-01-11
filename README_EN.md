@@ -37,7 +37,7 @@ A comprehensive network security defense system integrating honeypot, intrusion 
 ### One-click Installation
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/CurtisLu1/backtrace/main/install.sh)
+bash <(curl -sL https://raw.githubusercontent.com/CurtisLu1/CyberSentry/main/install.sh)
 ```
 
 ### System Requirements
