@@ -1,6 +1,32 @@
 #!/bin/bash
 set -e  # 脚本中任何命令失败都立即退出
 
+# 确保是 root 用户
+[ "$EUID" -eq 0 ] || {
+    echo "请使用 root 权限运行此脚本"
+    exit 1
+}
+
+# 确保是 Debian/Ubuntu 系统
+[ -f /etc/debian_version ] || [ -f /etc/ubuntu_version ] || {
+    echo "此脚本仅支持 Debian/Ubuntu 系统"
+    exit 1
+}
+
+# 首先更新系统并安装基本工具
+echo "更新系统并安装基本工具..."
+apt update || {
+    echo "apt update 失败"
+    exit 1
+}
+
+# 安装 net-tools
+echo "安装 net-tools..."
+apt install -y net-tools || {
+    echo "net-tools 安装失败"
+    exit 1
+}
+
 # 函数定义
 check_command() {
     command -v "$1" >/dev/null 2>&1 || {
@@ -110,16 +136,6 @@ fi
 for cmd in apt systemctl grep awk; do
     check_command "$cmd"
 done
-
-[ "$EUID" -eq 0 ] || {
-    echo "请使用 root 权限运行此脚本"
-    exit 1
-}
-
-[ -f /etc/debian_version ] || [ -f /etc/ubuntu_version ] || {
-    echo "此脚本仅支持 Debian/Ubuntu 系统"
-    exit 1
-}
 
 # 添加系统源更新函数
 update_sources() {
