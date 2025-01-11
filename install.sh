@@ -115,6 +115,39 @@ check_ufw_rule() {
     return 1
 }
 
+# 在函数定义部分添加备份管理函数
+backup_with_timestamp() {
+    local file="$1"
+    local max_backups="${2:-5}"  # 默认最多保留5个备份
+    local backup_dir="/root/config_backups"
+    
+    # 创建备份目录
+    mkdir -p "$backup_dir"
+    
+    # 生成带时间戳的备份文件名
+    local timestamp=$(date '+%Y%m%d_%H%M%S')
+    local backup_file="${backup_dir}/$(basename ${file}).${timestamp}.bak"
+    
+    # 创建备份
+    if [ -f "$file" ]; then
+        cp "$file" "$backup_file"
+        echo "已创建配置备份: $backup_file"
+        
+        # 清理旧备份，只保留最新的N个
+        local old_backups=($(ls -t "${backup_dir}/$(basename ${file})".*.bak 2>/dev/null))
+        if [ ${#old_backups[@]} -gt "$max_backups" ]; then
+            echo "清理旧备份文件..."
+            for ((i="$max_backups"; i<${#old_backups[@]}; i++)); do
+                rm -f "${old_backups[i]}"
+                echo "已删除旧备份: ${old_backups[i]}"
+            done
+        fi
+        
+        return 0
+    fi
+    return 1
+}
+
 # 变量定义
 COWRIE_INSTALL_DIR="/opt/cowrie"
 LOG_RETENTION_DAYS=30
@@ -272,11 +305,7 @@ if ! check_installed "fail2ban" "systemctl is-active --quiet fail2ban"; then
     # 备份配置
     echo "1. 备份 fail2ban 配置..."
     if [ -f /etc/fail2ban/jail.local ]; then
-        cp /etc/fail2ban/jail.local /etc/fail2ban/jail.local.bak.$(date +%s) || {
-            echo "错误：无法备份 fail2ban 配置文件"
-            exit 1
-        }
-        echo "备份完成：/etc/fail2ban/jail.local.bak.$(date +%s)"
+        backup_with_timestamp "/etc/fail2ban/jail.local" 3
     fi
 
     # 写入新配置
@@ -517,8 +546,8 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
             ;;
         1)
             echo "配置仅使用密钥认证..."
-            # 备份原配置
-            cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak.$(date +%s)
+            # 创建配置备份
+            backup_with_timestamp "/etc/ssh/sshd_config" 3
             
             # 移除所有相关的认证配置行
             sed -i '/^#\?PasswordAuthentication/d' /etc/ssh/sshd_config

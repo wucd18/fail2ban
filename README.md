@@ -143,6 +143,22 @@ bash <(curl -sL https://raw.githubusercontent.com/CurtisLu1/CyberSentry/main/ins
 - 自动压缩
 - 自动清理30天前的日志
 
+## 配置备份
+
+### 备份策略
+- 备份位置：`/root/config_backups/`
+- 命名格式：`配置文件名.YYYYMMDD_HHMMSS.bak`
+- 保留策略：每个配置保留最近3-5个版本
+- 自动清理：删除过期备份
+
+### 备份内容
+- SSH配置：`sshd_config` 备份
+- Fail2ban配置：`jail.local` 备份
+- 每次修改配置前自动创建备份
+- 支持配置回滚
+
+### 备份管理
+
 ## 服务管理
 
 ```bash

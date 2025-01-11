@@ -143,6 +143,22 @@ bash <(curl -sL https://raw.githubusercontent.com/CurtisLu1/CyberSentry/main/ins
 - Automatic compression
 - Auto-cleanup of logs older than 30 days
 
+## Configuration Backup
+
+### Backup Strategy
+- Location: `/root/config_backups/`
+- Naming format: `configname.YYYYMMDD_HHMMSS.bak`
+- Retention: Keeps 3-5 most recent versions per config
+- Auto cleanup: Removes expired backups
+
+### Backed Up Configs
+- SSH config: `sshd_config` backups
+- Fail2ban config: `jail.local` backups
+- Automatic backup before each config change
+- Supports configuration rollback
+
+### Backup Management
+
 ## Service Management
 
 ```bash
