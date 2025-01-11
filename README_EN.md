@@ -1,8 +1,36 @@
-# Backtrance
+# CyberSentry
 
 [简体中文](./README.md) | English
 
-A Cowrie-based SSH honeypot deployment tool with integrated logging and security features.
+A comprehensive network security defense system integrating honeypot, intrusion detection, security hardening and multiple protection mechanisms.
+
+## Core Features
+
+1. Honeypot System
+   - SSH Honeypot
+   - Attacker Behavior Recording
+   - Attack Pattern Analysis
+
+2. Security Protection
+   - Fail2ban Integration
+   - System Hardening
+   - Automatic Blocking
+
+3. Log Management
+   - Automatic Log Rotation
+   - Smart Cleanup
+   - Analysis Reports
+
+4. System Monitoring
+   - Real-time Monitoring
+   - Anomaly Detection
+   - Alert Notification
+
+## Highlights
+- One-click Deployment
+- Fully Automated Operations
+- Complete Audit Trail
+- Intelligent Defense Response
 
 ## Quick Start
 
