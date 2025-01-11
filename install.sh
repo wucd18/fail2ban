@@ -135,7 +135,7 @@ EOF
 echo "检查系统软件源..."
 update_sources
 
-# 添加 Python 版本检测函数
+# 修改 Python 版本检测函数
 check_python_version() {
     local current_version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
     # 使用 awk 进行版本比较，避免 bc 可能出现的浮点数比较问题
@@ -177,6 +177,17 @@ upgrade_python() {
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1
 }
 
+# 添加 Python 依赖修复函数
+fix_python_deps() {
+    echo "修复 Python 依赖..."
+    # 修复 apt_pkg 模块
+    if ! python3 -c "import apt_pkg" 2>/dev/null; then
+        echo "重新安装 python3-apt 以修复 apt_pkg 模块..."
+        apt-get remove --purge -y python3-apt
+        apt-get install -y python3-apt
+    fi
+}
+
 # 在环境检查后添加 Python 版本检查
 echo "检查 Python 版本要求..."
 if ! check_python_version; then
@@ -187,6 +198,7 @@ if ! check_python_version; then
         exit 1
     fi
     echo "Python 已成功升级到 3.9+"
+    fix_python_deps
 fi
 
 # 系统依赖安装和 Python 环境检查
