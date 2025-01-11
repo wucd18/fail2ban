@@ -1,5 +1,7 @@
 # Backtrance
 
+[English](./README_EN.md) | 简体中文
+
 一个基于 Cowrie 的 SSH 蜜罐部署工具，集成了日志管理和安全防护功能。
 
 ## 快速开始
