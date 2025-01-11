@@ -522,37 +522,116 @@ check_service() {
 check_service "cowrie"
 check_service "fail2ban"
 
-# 最终状态报告
-echo "==== 安装完成 ===="
-if [ "$SERVICE_CHECK_FAILED" = "true" ]; then
-    echo "警告：某些服务启动失败，请检查上述日志"
-    echo "可以使用以下命令查看详细日志："
-    echo "journalctl -u cowrie -f"
-    echo "journalctl -u fail2ban -f"
+# 在最终状态报告前添加防火墙检查和提示
+echo "检查防火墙状态..."
+if ! command -v ufw >/dev/null 2>&1; then
+    echo "提示：系统未安装防火墙(UFW)，建议安装并配置以提高安全性"
+    echo "安装和配置方法："
+    echo "apt install ufw"
+    echo "ufw allow ${NEW_SSH_PORT:-22}/tcp  # 开放 SSH 端口"
+    echo "ufw allow 2222/tcp                 # 开放蜜罐端口"
+    echo "ufw enable                         # 启用防火墙"
 else
-    echo "所有服务运行正常！"
-fi
-
-echo "配置总结："
-[ "$NEW_SSH_PORT" != "$CURRENT_SSH_PORT" ] && echo "- 新 SSH 端口: $NEW_SSH_PORT"
-[ -n "$TEMP_KEY_FILE" ] && echo "- SSH 密钥位置: $TEMP_KEY_FILE"
-echo "- Cowrie 端口: 2222"
-echo "- 日志位置: $COWRIE_INSTALL_DIR/var/log/cowrie/"
-
-# 添加防火墙状态检查
-if command -v ufw >/dev/null 2>&1; then
     echo "防火墙状态："
     if ufw status | grep -q "Status: active"; then
         echo "- UFW 已启用"
         echo "- SSH 端口状态: $(ufw status | grep -E "$NEW_SSH_PORT/tcp" || echo "未开放")"
         echo "- 蜜罐端口状态: $(ufw status | grep "2222/tcp" || echo "未开放")"
     else
-        echo "警告：UFW 防火墙未启用"
+        echo "警告：UFW 防火墙已安装但未启用"
+        echo "建议执行以下命令配置防火墙："
+        echo "ufw allow ${NEW_SSH_PORT:-22}/tcp"
+        echo "ufw allow 2222/tcp"
+        echo "ufw enable"
     fi
 fi
 
-if [ "$SERVICES_STATUS" != "OK" ]; then
-    echo "提示：使用以下命令查看详细日志："
-    echo "journalctl -u cowrie -f"
-    echo "journalctl -u fail2ban -f"
+# 在脚本末尾添加美化输出函数和最终配置总结
+print_header() {
+    echo -e "\n\033[1;34m=== $1 ===\033[0m"
+}
+
+print_success() {
+    echo -e "\033[1;32m✓ $1\033[0m"
+}
+
+print_warning() {
+    echo -e "\033[1;33m⚠ $1\033[0m"
+}
+
+print_error() {
+    echo -e "\033[1;31m✗ $1\033[0m"
+}
+
+print_info() {
+    echo -e "\033[1;36m➜ $1\033[0m"
+}
+
+# 最终配置总结
+clear
+print_header "Backtrance 安装完成"
+echo "安装时间: $(date '+%Y-%m-%d %H:%M:%S')"
+
+print_header "SSH 配置信息"
+echo "当前 SSH 配置："
+print_info "端口: ${NEW_SSH_PORT:-$(grep -E "^Port\s+" /etc/ssh/sshd_config | awk '{print $2}' || echo "22")}"
+print_info "密码认证: $(grep "^PasswordAuthentication" /etc/ssh/sshd_config | awk '{print $2}' || echo "yes")"
+print_info "密钥认证: $(grep "^PubkeyAuthentication" /etc/ssh/sshd_config | awk '{print $2}' || echo "yes")"
+if [ -f "/root/.ssh/authorized_keys" ]; then
+    print_info "已配置公钥数量: $(grep -c "^ssh-" /root/.ssh/authorized_keys)"
 fi
+[ -n "$TEMP_KEY_FILE" ] && print_info "新生成的私钥位置: $TEMP_KEY_FILE"
+
+print_header "蜜罐信息"
+print_info "Cowrie 端口: 2222"
+print_info "安装目录: $COWRIE_INSTALL_DIR"
+print_info "日志位置: $COWRIE_INSTALL_DIR/var/log/cowrie/"
+if systemctl is-active --quiet cowrie; then
+    print_success "Cowrie 服务运行状态: 正常运行"
+else
+    print_error "Cowrie 服务运行状态: 未运行"
+fi
+
+print_header "Fail2ban 状态"
+if systemctl is-active --quiet fail2ban; then
+    print_success "Fail2ban 服务: 正常运行"
+    print_info "已激活的监狱: $(fail2ban-client status | grep "Jail list" | cut -d':' -f2)"
+else
+    print_error "Fail2ban 服务: 未运行"
+fi
+
+print_header "防火墙状态"
+if command -v ufw >/dev/null 2>&1; then
+    if ufw status | grep -q "Status: active"; then
+        print_success "UFW 防火墙: 已启用"
+        echo "开放的端口:"
+        ufw status | grep -E "ALLOW" | while read -r line; do
+            print_info "$line"
+        done
+    else
+        print_warning "UFW 防火墙: 已安装但未启用"
+        print_info "建议执行: ufw enable"
+    fi
+else
+    print_warning "UFW 防火墙: 未安装"
+    print_info "建议执行: apt install ufw"
+fi
+
+print_header "重要提示"
+echo "1. 请确保记录以下信息："
+print_info "SSH 端口: ${NEW_SSH_PORT:-22}"
+[ -n "$TEMP_KEY_FILE" ] && print_info "SSH 私钥位置: $TEMP_KEY_FILE"
+echo "2. 确保防火墙规则正确配置"
+echo "3. 测试新的 SSH 配置前不要关闭当前会话"
+
+print_header "常用命令"
+echo "查看服务状态:"
+print_info "systemctl status cowrie"
+print_info "systemctl status fail2ban"
+print_info "ufw status"
+echo "查看日志:"
+print_info "tail -f $COWRIE_INSTALL_DIR/var/log/cowrie/cowrie.log"
+print_info "journalctl -u cowrie -f"
+print_info "tail -f /var/log/fail2ban.log"
+
+echo -e "\n\033[1;32m安装完成！如需帮助，请访问项目主页。\033[0m\n"

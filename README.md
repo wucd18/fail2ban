@@ -92,7 +92,19 @@ systemctl restart fail2ban
 
 请在生产环境部署前：
 1. 修改默认配置
-2. 更新系统防火墙规则
+2. 确保防火墙配置正确：
+   - 如果使用 UFW：确保 SSH 端口和蜜罐端口(2222)已开放
+   - 如果未安装防火墙：强烈建议安装并配置
+   ```bash
+   # 安装和配置 UFW
+   apt install ufw
+   ufw allow <SSH端口>/tcp
+   ufw allow 2222/tcp
+   ufw enable
+   
+   # 检查配置
+   ufw status
+   ```
 3. 定期检查系统日志
 
 ## 卸载
