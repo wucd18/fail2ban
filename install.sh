@@ -1,55 +1,82 @@
 #!/bin/bash
 set -e  # 脚本中任何命令失败都立即退出
 
-# 定义变量 (提高可配置性)
+# 函数定义
+check_command() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "错误：未找到命令 $1"
+        exit 1
+    }
+}
+
+backup_config() {
+    local config_file="$1"
+    [ -f "$config_file" ] && cp "$config_file" "${config_file}.bak"
+}
+
+write_config() {
+    local file="$1"
+    cat > "$file"
+}
+
+setup_ssh_key() {
+    local key_type="$1"
+    mkdir -p /root/.ssh
+    chmod 700 /root/.ssh
+    
+    case $key_type in
+        "generate")
+            local ssh_key_file="/root/.ssh/id_rsa"
+            ssh-keygen -t rsa -b 4096 -f "$ssh_key_file" -N ""
+            cat "${ssh_key_file}.pub" >> /root/.ssh/authorized_keys
+            local temp_key_file="/tmp/ssh_key_$(date +%s).txt"
+            cat "$ssh_key_file" > "$temp_key_file"
+            chmod 600 "$temp_key_file"
+            echo "SSH 密钥已生成，私钥保存在: ${temp_key_file}"
+            ;;
+        "import")
+            read -r -p "请输入 SSH 公钥: " pubkey
+            [[ $pubkey == ssh-rsa* ]] || {
+                echo "错误：无效的公钥格式"
+                return 1
+            }
+            echo "$pubkey" >> /root/.ssh/authorized_keys
+            echo "公钥已添加"
+            ;;
+    esac
+    chmod 600 /root/.ssh/authorized_keys
+}
+
+# 变量定义
 COWRIE_INSTALL_DIR="/opt/cowrie"
 LOG_RETENTION_DAYS=30
 CLEANUP_LOG_SCRIPT="/usr/local/bin/cleanup_logs.sh"
 CRON_SCHEDULE="0 2 * * *"  # 修正 cron 表达式
 
-# 检查是否为 root
-if [ "$EUID" -ne 0 ]; then
-  echo "请使用 root 权限运行此脚本。"
-  exit 1
-fi
+# 环境检查
+for cmd in apt systemctl netstat grep awk; do
+    check_command "$cmd"
+done
 
-# 检查操作系统
-if [ ! -f /etc/debian_version ] && [ ! -f /etc/ubuntu_version ]; then
-    echo "此脚本仅支持 Debian/Ubuntu 系统"
+[ "$EUID" -eq 0 ] || {
+    echo "请使用 root 权限运行此脚本"
     exit 1
-fi
-
-# 检查必要命令
-check_command() {
-    if ! command -v "$1" >/dev/null 2>&1; then
-        echo "错误：未找到命令 $1"
-        exit 1
-    fi
 }
 
-# 检查基本命令
-check_command apt
-check_command systemctl
+[ -f /etc/debian_version ] || [ -f /etc/ubuntu_version ] || {
+    echo "此脚本仅支持 Debian/Ubuntu 系统"
+    exit 1
+}
 
-# 配置 fail2ban
+# 系统更新和依赖安装
+echo "更新系统并安装依赖..."
+apt update && apt upgrade -y
+apt install -y fail2ban python3-virtualenv git curl netstat-nat
+
+# Fail2ban 配置
 echo "配置 fail2ban..."
-# 备份原配置
-[ -f /etc/fail2ban/jail.local ] && cp /etc/fail2ban/jail.local /etc/fail2ban/jail.local.bak
-
-cat <<EOF > /etc/fail2ban/jail.local
-[DEFAULT]
-bantime = 86400
-findtime = 300
-maxretry = 3
-action = %(action_)s
-
-[sshd]
-enabled = true
-echo "配置 fail2ban..."
-# 备份原配置
-[ -f /etc/fail2ban/jail.local ] && cp /etc/fail2ban/jail.local /etc/fail2ban/jail.local.bak
-
-cat <<EOF > /etc/fail2ban/jail.local
+backup_config "/etc/fail2ban/jail.local"
+cat > /etc/fail2ban/jail.local <<'EOF'
 [DEFAULT]
 bantime = 86400
 findtime = 300
@@ -60,9 +87,8 @@ action = %(action_)s
 enabled = true
 logpath = /var/log/auth.log
 EOF
-    echo "$(date): Log cleanup failed!" >> /var/log/cleanup.log
-fi
-EOL
+
+systemctl restart fail2ban
 
 echo "创建日志清理脚本..."
 
@@ -82,29 +108,7 @@ if ! git clone https://github.com/cowrie/cowrie.git "$COWRIE_INSTALL_DIR"; then
     echo "安装 Cowrie 蜜罐失败！"
     exit 1
 fi
-if ! crontab -l | grep -q "$CLEANUP_LOG_SCRIPT"; then
-    (crontab -l 2>/dev/null; echo "$CRON_TASK") | crontab -
-    echo "已配置定时任务清理日志。"
-else
-    echo "定时任务清理日志已存在，无需重复配置。"
-fi
 
-# 安装 Cowrie 蜜罐
-echo "安装 Cowrie 蜜罐..."
-if ! git clone https://github.com/cowrie/cowrie.git "$COWRIE_INSTALL_DIR"; then
-sed -i 's/^#download_limit_size=10485760/download_limit_size=1048576/' etc/cowrie.cfg
-
-# 配置 Cowrie 服务
-
-cat <<EOF > /etc/systemd/system/cowrie.service
-[Unit]
-Description=Cowrie SSH Honeypot
-After=network.target
-
-[Service]
-User=root
-sed -i 's/hostname = svr04/hostname = fake-ssh-server/' etc/cowrie.cfg
-sed -i 's/^#listen_port=2222/listen_port=2222/' etc/cowrie.cfg
 sed -i 's/^#download_limit_size=10485760/download_limit_size=1048576/' etc/cowrie.cfg
 
 # 配置 Cowrie 服务
@@ -153,12 +157,24 @@ bantime = 86400
 EOF
 
 cat <<'EOF' > /etc/fail2ban/filter.d/cowrie.conf
-CURRENT_PASSWORD_AUTH=$(grep -E "^PasswordAuthentication\s+" /etc/ssh/sshd_config | awk '{print $2}')
 failregex = .*Failed login for .* from <HOST>
+EOF
+
+# SSH 安全配置
+echo "配置 SSH 安全选项..."
+
+# 检测当前 SSH 配置
+current_ssh_config() {
+    local port=$(grep -E "^Port\s+" /etc/ssh/sshd_config | awk '{print $2}')
+    echo "${port:-22}"
+}
+
+CURRENT_SSH_PORT=$(current_ssh_config)
+CURRENT_PASSWORD_AUTH=$(grep -E "^PasswordAuthentication\s+" /etc/ssh/sshd_config | awk '{print $2}')
+CURRENT_PASSWORD_AUTH=${CURRENT_PASSWORD_AUTH:-yes}
 CURRENT_PUBKEY_AUTH=$(grep -E "^PubkeyAuthentication\s+" /etc/ssh/sshd_config | awk '{print $2}')
 CURRENT_PUBKEY_AUTH=${CURRENT_PUBKEY_AUTH:-yes}
 
-# SSH 配置部分
 echo "当前 SSH 配置："
 echo "- 端口: $CURRENT_SSH_PORT"
 echo "- 密码认证: $CURRENT_PASSWORD_AUTH"
@@ -166,16 +182,15 @@ echo "- 密钥认证: $CURRENT_PUBKEY_AUTH"
 echo ""
 
 # SSH 端口配置
-CURRENT_PASSWORD_AUTH=$(grep -E "^PasswordAuthentication\s+" /etc/ssh/sshd_config | awk '{print $2}')
 echo "0) 保持当前配置 (端口: $CURRENT_SSH_PORT)"
-CURRENT_PUBKEY_AUTH=$(grep -E "^PubkeyAuthentication\s+" /etc/ssh/sshd_config | awk '{print $2}')
-CURRENT_PUBKEY_AUTH=${CURRENT_PUBKEY_AUTH:-yes}
+echo "1) 随机生成新端口"
+echo "2) 手动输入新端口"
 read -p "请选择 [0/1/2] (默认: 0): " PORT_CHOICE
 PORT_CHOICE=${PORT_CHOICE:-0}
 
-echo "- 端口: $CURRENT_SSH_PORT"
+case $PORT_CHOICE in
     0)
-echo "- 密钥认证: $CURRENT_PUBKEY_AUTH"
+        NEW_SSH_PORT=$CURRENT_SSH_PORT
         echo "保持当前 SSH 端口: $NEW_SSH_PORT"
         ;;
     1)
@@ -183,24 +198,10 @@ echo "- 密钥认证: $CURRENT_PUBKEY_AUTH"
         while netstat -tuln | grep ":$NEW_SSH_PORT " > /dev/null; do
             NEW_SSH_PORT=$((RANDOM % 55535 + 10000))
         done
-read -p "请选择 [0/1/2] (默认: 0): " PORT_CHOICE
-PORT_CHOICE=${PORT_CHOICE:-0}
+        ;;
     2)
         while true; do
             read -p "请输入要使用的 SSH 端口 (1024-65535): " NEW_SSH_PORT
-            if [[ "$NEW_SSH_PORT" =~ ^[0-9]+$ ]] && [ "$NEW_SSH_PORT" -ge 1024 ] && [ "$NEW_SSH_PORT" -le 65535 ]; then
-                # 检查端口是否被占用
-                if ! netstat -tuln | grep ":$NEW_SSH_PORT " > /dev/null; then
-                    break
-                else
-                    echo "错误：端口 $NEW_SSH_PORT 已被占用，请选择其他端口"
-                fi
-            else
-                echo "错误：请输入 1024-65535 之间的有效端口号"
-            fi
-        done
-        ;;
-    *)
             if [[ "$NEW_SSH_PORT" =~ ^[0-9]+$ ]] && [ "$NEW_SSH_PORT" -ge 1024 ] && [ "$NEW_SSH_PORT" -le 65535 ]; then
                 # 检查端口是否被占用
                 if ! netstat -tuln | grep ":$NEW_SSH_PORT " > /dev/null; then
@@ -227,121 +228,65 @@ echo "2) 同时启用密码和密钥认证"
 read -p "请选择 [0/1/2] (默认: 0): " AUTH_CHOICE
 AUTH_CHOICE=${AUTH_CHOICE:-0}
 
-
-        mkdir -p /root/.ssh
+case $AUTH_CHOICE in
+    0)
         echo "保持当前认证配置"
         ;;
     1)
-            1|2)
-        # SSH 密钥配置
-        echo "SSH 密钥配置："
-                echo "2) 使用现有公钥（需要手动输入）"
-                read -p "请选择 [1/2]: " KEY_CHOICE
+        # 禁用密码认证
+        sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
 
-        read -p "请选择 [1/2/3] (默认: 3): " KEY_CHOICE
-        KEY_CHOICE=${KEY_CHOICE:-3}
+        # 启用密钥认证
+        sed -i 's/^#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+        sed -i 's/^PubkeyAuthentication no/PubkeyAuthentication yes/' /etc/ssh/sshd_config
 
-        mkdir -p /root/.ssh
-        chmod 700 /root/.ssh
-                sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+        # 配置 SSH 密钥
+        setup_ssh_key "generate"
 
-                # 启用密钥认证
-                sed -i 's/^#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-                sed -i 's/^PubkeyAuthentication no/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+        # 重启 SSH 服务
+        systemctl restart sshd
 
-                # 配置 SSH 密钥
-                mkdir -p /root/.ssh
-                chmod 700 /root/.ssh
-
-                case $KEY_CHOICE in
-                    1)
-                        # 自动生成密钥对
-                sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-
-                        cat "${SSH_KEY_FILE}.pub" >> /root/.ssh/authorized_keys
-                sed -i 's/^#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-                sed -i 's/^PubkeyAuthentication no/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-
-                        cat "$SSH_KEY_FILE" > "$TEMP_KEY_FILE"
-                        chmod 600 "$TEMP_KEY_FILE"
-                chmod 700 /root/.ssh
-                        echo "=========================="
-                        echo "SSH 密钥已自动生成！"
-                        echo "私钥已保存到: ${TEMP_KEY_FILE}"
-                        echo "请立即保存私钥并删除临时文件！"
-                        echo "=========================="
-                        ;;
-                        cat "${SSH_KEY_FILE}.pub" >> /root/.ssh/authorized_keys
-                        
-                        echo "请输入您的 SSH 公钥（以 ssh-rsa 开头的完整内容）："
-                        TEMP_KEY_FILE="/tmp/ssh_key_$(date +%s).txt"
-                        cat "$SSH_KEY_FILE" > "$TEMP_KEY_FILE"
-                        chmod 600 "$TEMP_KEY_FILE"
-                        
-                            echo "公钥已成功添加！"
-                        echo "SSH 密钥已自动生成！"
-                            echo "错误：无效的公钥格式！"
-                        echo "请立即保存私钥并删除临时文件！"
-                        echo "=========================="
-                        ;;
-                    2)
-                        # 手动输入公钥
-                        echo "请输入您的 SSH 公钥（以 ssh-rsa 开头的完整内容）："
-                        read -r PUBKEY
-                        
-                        if [[ $PUBKEY == ssh-rsa* ]]; then
-                            echo "$PUBKEY" >> /root/.ssh/authorized_keys
-                            echo "公钥已成功添加！"
-                        else
-                            echo "错误：无效的公钥格式！"
-                            exit 1
-                        fi
-                        ;;
-                    *)
-                        echo "无效的选择！"
-                        exit 1
-                        ;;
-                esac
-
-                chmod 600 /root/.ssh/authorized_keys
-
-                # 重启 SSH 服务
-                systemctl restart sshd
-
-        sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+        echo "新的 SSH 端口: ${NEW_SSH_PORT}"
+        echo "密码认证已禁用，仅允许密钥登录"
+        echo "=========================="
         ;;
-                echo "新的 SSH 端口: ${NEW_SSH_PORT}"
-                echo "密码认证已禁用，仅允许密钥登录"
-                echo "=========================="
-        sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+    2)
+        # 启用密码和密钥认证
+        sed -i 's/^#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+        sed -i 's/^PubkeyAuthentication no/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+        sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+        ;;
+    *)
+        echo "无效的选择！保持当前认证配置"
         ;;
 esac
 
 # 防火墙配置
-if command -v ufw >/dev/null 2>&1; then
+setup_firewall() {
+    command -v ufw >/dev/null 2>&1 || return 0
+    
     echo "检测到 UFW 防火墙..."
-    if [ "$NEW_SSH_PORT" != "$CURRENT_SSH_PORT" ]; then
-        read -p "是否配置 UFW 防火墙规则？[y/N]: " SETUP_UFW
-        SETUP_UFW=${SETUP_UFW:-n}
-        if [[ $SETUP_UFW =~ ^[Yy]$ ]]; then
-            ufw allow $NEW_SSH_PORT/tcp comment 'SSH'
-            ufw allow 2222/tcp comment 'Cowrie Honeypot'
-            ufw --force enable
-        fi
-    fi
-fi
+    [ "$NEW_SSH_PORT" != "$CURRENT_SSH_PORT" ] || return 0
+    
+    read -p "是否配置防火墙规则？[y/N]: " -r SETUP_UFW
+    [[ $SETUP_UFW =~ ^[Yy]$ ]] || return 0
+    
+    ufw allow "$NEW_SSH_PORT"/tcp comment 'SSH'
+    ufw allow 2222/tcp comment 'Cowrie Honeypot'
+    ufw --force enable
+}
+
+setup_firewall
 
 # 如果端口已更改，则更新 SSH 配置
 if [ "$NEW_SSH_PORT" != "$CURRENT_SSH_PORT" ]; then
     sed -i "s/^#\?Port.*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
 fi
 
-        if [[ $SETUP_UFW =~ ^[Yy]$ ]]; then
 if [ "$NEW_SSH_PORT" != "$CURRENT_SSH_PORT" ] || [ "$AUTH_CHOICE" != "0" ]; then
     systemctl restart sshd
-            ufw --force enable
-        fi
-    fi
+fi
+
 echo "SSH 配置状态："
 [ "$NEW_SSH_PORT" != "$CURRENT_SSH_PORT" ] && echo "- SSH 端口已更改为: ${NEW_SSH_PORT}"
 [ "$AUTH_CHOICE" != "0" ] && echo "- SSH 认证配置已更新"
@@ -355,16 +300,10 @@ else
     echo "服务启动失败，请检查系统日志"
     exit 1
 fi
-echo "SSH 配置状态："
-[ "$NEW_SSH_PORT" != "$CURRENT_SSH_PORT" ] && echo "- SSH 端口已更改为: ${NEW_SSH_PORT}"
-[ "$AUTH_CHOICE" != "0" ] && echo "- SSH 认证配置已更新"
-[ "$SETUP_UFW" = "y" ] && echo "- 防火墙规则已更新"
-echo "=========================="
 
-# 检查服务状态
-if systemctl is-active --quiet cowrie && systemctl is-active --quiet fail2ban; then
-    echo "所有组件安装完成！Fail2Ban 和 Cowrie 蜜罐服务已成功启动。"
-else 
-    echo "服务启动失败，请检查系统日志"
-    exit 1
-fi
+echo "==== 安装完成 ===="
+echo "配置总结："
+[ "$NEW_SSH_PORT" != "$CURRENT_SSH_PORT" ] && echo "- 新 SSH 端口: $NEW_SSH_PORT"
+[ -n "$TEMP_KEY_FILE" ] && echo "- SSH 密钥位置: $TEMP_KEY_FILE"
+echo "- Cowrie 端口: 2222"
+echo "- 日志位置: $COWRIE_INSTALL_DIR/var/log/cowrie/"
