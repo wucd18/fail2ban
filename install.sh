@@ -171,14 +171,14 @@ echo "====fail2ban 配置完成===="
 
 # 日志清理脚本
 echo "创建日志清理脚本..."
-cat > "$CLEANUP_LOG_SCRIPT" <<'EOL' || {
+cat > "$CLEANUP_LOG_SCRIPT" << 'EOF' || {
     echo "创建日志清理脚本失败"
     exit 1
 }
 #!/bin/bash
 find /var/log -type f -name "*.log" -mtime +30 -exec rm -f {} \;
 echo "$(date): Logs older than 30 days have been deleted." >> /var/log/cleanup.log
-EOL
+EOF
 
 chmod +x "$CLEANUP_LOG_SCRIPT" || {
     echo "设置日志清理脚本权限失败"
