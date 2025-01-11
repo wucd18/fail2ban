@@ -395,32 +395,42 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
         1)
             # 禁用密码认证
             sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+            sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
 
             # 启用密钥认证
             sed -i 's/^#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
             sed -i 's/^PubkeyAuthentication no/PubkeyAuthentication yes/' /etc/ssh/sshd_config
 
-            # 添加密钥选择选项
+            # 密钥配置选项
             echo "SSH 密钥配置："
-            echo "1) 使用现有公钥"
+            echo "0) 保持现有密钥"
+            echo "1) 使用新的公钥"
             echo "2) 自动生成新密钥对"
-            read -p "请选择 [1/2] (默认: 1): " KEY_CHOICE
-            KEY_CHOICE=${KEY_CHOICE:-1}
+            read -p "请选择 [0/1/2] (默认: 0): " KEY_CHOICE
+            KEY_CHOICE=${KEY_CHOICE:-0}
 
             case $KEY_CHOICE in
+                0)
+                    echo "保持现有密钥配置"
+                    ;;
                 1)
                     setup_ssh_key "import"
                     ;;
                 2)
-                    setup_ssh_key "generate"
+                    echo "生成新的密钥对..."
+                    echo "注意：这将覆盖现有的密钥"
+                    read -p "是否继续？[y/N]: " CONFIRM
+                    if [[ $CONFIRM =~ ^[Yy]$ ]]; then
+                        setup_ssh_key "generate"
+                    else
+                        echo "取消生成新密钥"
+                    fi
                     ;;
                 *)
-                    echo "无效的选择！使用现有公钥"
-                    setup_ssh_key "import"
+                    echo "无效的选择！保持现有密钥配置"
                     ;;
             esac
 
-            # 重启 SSH 服务
             systemctl restart sshd
 
             echo "新的 SSH 端口: ${NEW_SSH_PORT}"
@@ -473,40 +483,53 @@ fi
 
 # 检查服务状态
 echo "检查服务状态..."
-SERVICES_STATUS="OK"
+SERVICE_CHECK_FAILED=false
 
-# 检查 Cowrie 状态
-if ! systemctl is-active --quiet cowrie; then
-    echo "警告: Cowrie 服务未启动，尝试启动..."
-    systemctl start cowrie
-    sleep 2
-    if ! systemctl is-active --quiet cowrie; then
-        echo "错误: Cowrie 服务启动失败"
-        echo "Cowrie 日志:"
-        journalctl -u cowrie --no-pager -n 20
-        SERVICES_STATUS="ERROR"
-    fi
-fi
+check_service() {
+    local service_name="$1"
+    local max_attempts=3
+    local attempt=1
 
-# 检查 fail2ban 状态
-if ! systemctl is-active --quiet fail2ban; then
-    echo "警告: fail2ban 服务未启动，尝试启动..."
-    systemctl start fail2ban
-    sleep 2
-    if ! systemctl is-active --quiet fail2ban; then
-        echo "错误: fail2ban 服务启动失败"
-        echo "fail2ban 日志:"
-        journalctl -u fail2ban --no-pager -n 20
-        SERVICES_STATUS="ERROR"
-    fi
-fi
+    while [ $attempt -le $max_attempts ]; do
+        echo "检查 $service_name 服务状态 (尝试 $attempt/$max_attempts)..."
+        
+        if systemctl is-active --quiet "$service_name"; then
+            echo "$service_name 服务运行正常"
+            return 0
+        fi
+
+        echo "尝试启动 $service_name 服务..."
+        systemctl start "$service_name"
+        sleep 2
+        
+        if systemctl is-active --quiet "$service_name"; then
+            echo "$service_name 服务已成功启动"
+            return 0
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    echo "警告: $service_name 服务启动失败"
+    echo "===== $service_name 服务日志 ====="
+    journalctl -u "$service_name" --no-pager -n 20
+    SERVICE_CHECK_FAILED=true
+    return 1
+}
+
+# 检查各个服务
+check_service "cowrie"
+check_service "fail2ban"
 
 # 最终状态报告
 echo "==== 安装完成 ===="
-if [ "$SERVICES_STATUS" = "OK" ]; then
-    echo "所有服务运行正常！"
+if [ "$SERVICE_CHECK_FAILED" = "true" ]; then
+    echo "警告：某些服务启动失败，请检查上述日志"
+    echo "可以使用以下命令查看详细日志："
+    echo "journalctl -u cowrie -f"
+    echo "journalctl -u fail2ban -f"
 else
-    echo "警告：部分服务可能未正常运行，请检查上述日志"
+    echo "所有服务运行正常！"
 fi
 
 echo "配置总结："
