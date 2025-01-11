@@ -65,6 +65,29 @@ get_python_version() {
     echo "$py_version"
 }
 
+# 添加防火墙规则检查函数（在函数定义部分添加）
+check_ufw_rule() {
+    local port="$1"
+    local comment="$2"
+    
+    # 检查所有可能的端口规则格式
+    if ufw status | grep -qE "^($port/tcp|$port|$port/tcp \(v6\))"; then
+        # 如果指定了注释，检查是否匹配
+        if [ -n "$comment" ]; then
+            if ufw status | grep -E "^($port/tcp|$port)" | grep -q "$comment"; then
+                echo "端口 $port 已配置 ($comment)"
+                return 0
+            fi
+            # 端口存在但注释不匹配，返回 2
+            return 2
+        else
+            echo "端口 $port 已配置"
+            return 0
+        fi
+    fi
+    return 1
+}
+
 # 变量定义
 COWRIE_INSTALL_DIR="/opt/cowrie"
 LOG_RETENTION_DAYS=30
@@ -445,37 +468,70 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
         
         echo "检测到 UFW 防火墙..."
         
-        # 检查现有规则
-        local current_rules=$(ufw status numbered | grep -E "22/tcp|2222/tcp|$NEW_SSH_PORT/tcp")
-        echo "现有防火墙规则:"
-        echo "$current_rules"
+        # 检查防火墙状态
+        local ufw_status=$(ufw status | grep "Status: " | cut -d' ' -f2)
+        echo "当前防火墙状态: $ufw_status"
         
-        # 确保 SSH 端口开放
-        if ! ufw status | grep -q "$NEW_SSH_PORT/tcp"; then
-            echo "添加 SSH 端口 $NEW_SSH_PORT 到防火墙规则..."
+        # 检查新 SSH 端口规则
+        local port_status=$(check_ufw_rule "$NEW_SSH_PORT" "SSH"; echo $?)
+        if [ $port_status -eq 1 ]; then
+            echo "添加新 SSH 端口 $NEW_SSH_PORT 到防火墙规则..."
             ufw allow "$NEW_SSH_PORT"/tcp comment 'SSH'
-            [ "$NEW_SSH_PORT" != "22" ] && [ "$CURRENT_SSH_PORT" = "22" ] && ufw delete allow 22/tcp
+        elif [ $port_status -eq 2 ]; then
+            echo "端口 $NEW_SSH_PORT 已存在其他规则，添加新规则..."
+            ufw allow "$NEW_SSH_PORT"/tcp comment 'SSH'
+        else
+            echo "SSH 端口 $NEW_SSH_PORT 规则已存在"
         fi
         
-        # 确保蜜罐端口开放
-        if ! ufw status | grep -q "2222/tcp"; then
-            echo "添加蜜罐端口 2222 到防火墙规则..."
+        # 检查原 SSH 端口规则（如果不同）
+        if [ "$NEW_SSH_PORT" != "$CURRENT_SSH_PORT" ]; then
+            if check_ufw_rule "$CURRENT_SSH_PORT" "SSH"; then
+                read -p "是否保留原 SSH 端口($CURRENT_SSH_PORT)规则？[Y/n]: " -r KEEP_OLD_PORT
+                KEEP_OLD_PORT=${KEEP_OLD_PORT:-y}
+                if [[ $KEEP_OLD_PORT =~ ^[Nn]$ ]]; then
+                    echo "删除原 SSH 端口规则..."
+                    ufw delete allow "$CURRENT_SSH_PORT"/tcp
+                else
+                    echo "保留原 SSH 端口规则作为备用"
+                fi
+            fi
+        fi
+        
+        # 检查蜜罐端口规则
+        local honeypot_status=$(check_ufw_rule "2222" "Cowrie"; echo $?)
+        if [ $honeypot_status -eq 1 ]; then
+            echo "添加蜜罐端口到防火墙规则..."
             ufw allow 2222/tcp comment 'Cowrie Honeypot'
+        elif [ $honeypot_status -eq 2 ]; then
+            echo "警告: 端口 2222 已有其他规则，可能会影响蜜罐功能"
+            read -p "是否添加新规则？[Y/n]: " -r ADD_HONEYPOT_RULE
+            ADD_HONEYPOT_RULE=${ADD_HONEYPOT_RULE:-y}
+            if [[ $ADD_HONEYPOT_RULE =~ ^[Yy]$ ]]; then
+                ufw allow 2222/tcp comment 'Cowrie Honeypot'
+            fi
+        else
+            echo "蜜罐端口规则已配置"
         fi
         
-        # 如果防火墙未启用，询问是否启用
-        if ! ufw status | grep -q "Status: active"; then
-            read -p "防火墙当前未启用，是否启用？[y/N]: " -r ENABLE_UFW
+        # 检查防火墙状态并询问是否启用
+        if [ "$ufw_status" != "active" ]; then
+            read -p "防火墙当前未启用，是否启用？[Y/n]: " -r ENABLE_UFW
+            ENABLE_UFW=${ENABLE_UFW:-y}
             if [[ $ENABLE_UFW =~ ^[Yy]$ ]]; then
                 echo "启用防火墙..."
                 ufw --force enable
+                echo "防火墙已启用"
             else
-                echo "警告：防火墙未启用，请确保手动配置安全规则"
+                print_warning "警告：防火墙未启用，请确保手动配置以下规则："
+                echo "- SSH 端口: $NEW_SSH_PORT/tcp"
+                echo "- 蜜罐端口: 2222/tcp"
+                [ "$NEW_SSH_PORT" != "$CURRENT_SSH_PORT" ] && [ "$KEEP_OLD_PORT" != "n" ] && echo "- 原 SSH 端口: $CURRENT_SSH_PORT/tcp"
             fi
         fi
         
         # 显示最终配置
-        echo "当前防火墙状态和规则："
+        echo -e "\n当前防火墙状态和规则："
         ufw status verbose
     }
 
@@ -627,12 +683,25 @@ if command -v ufw >/dev/null 2>&1; then
         print_success "UFW 防火墙: 已启用"
         echo "开放的端口:"
         ufw status | grep -E "ALLOW" | while read -r line; do
-            print_info "$line"
+            if echo "$line" | grep -q "SSH"; then
+                print_info "$line (SSH访问端口)"
+            elif echo "$line" | grep -q "Cowrie"; then
+                print_info "$line (蜜罐端口)"
+            else
+                print_info "$line"
+            fi
         done
     else
         print_warning "UFW 防火墙: 已安装但未启用"
         print_info "建议执行: ufw enable"
     fi
+    
+    # 检查必要端口
+    for port in "$FINAL_SSH_PORT" "2222"; do
+        if ! ufw status | grep -q "^$port/tcp"; then
+            print_warning "端口 $port 未在防火墙中配置"
+        fi
+    done
 else
     print_warning "UFW 防火墙: 未安装"
     print_info "建议执行: apt install ufw"

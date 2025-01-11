@@ -39,6 +39,10 @@ bash <(curl -sL https://raw.githubusercontent.com/CurtisLu1/backtrace/main/insta
 - UFW 防火墙配置（可选）：
   - 自动配置必需端口（SSH和蜜罐）
   - 智能规则管理（自动处理端口变更）
+  - 详细规则处理：
+    - 自动添加和删除规则
+    - 规则冲突检测
+    - 规则优先级管理
 
 ## 安装过程
 
@@ -87,6 +91,10 @@ bash <(curl -sL https://raw.githubusercontent.com/CurtisLu1/backtrace/main/insta
 - 自动配置蜜罐端口（2222）
 - 智能规则管理
 - 可选启用 UFW
+- 详细规则处理：
+  - 自动添加和删除规则
+  - 规则冲突检测
+  - 规则优先级管理
 
 ## 日志管理
 
