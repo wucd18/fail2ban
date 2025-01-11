@@ -516,13 +516,21 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
             echo "保持当前认证配置"
             ;;
         1)
-            # 禁用密码认证
-            sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-            sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-
-            # 启用密钥认证
-            sed -i 's/^#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-            sed -i 's/^PubkeyAuthentication no/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+            echo "配置仅使用密钥认证..."
+            # 确保先启用密钥认证
+            sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+            
+            # 禁用密码认证 - 修改所有可能的配置
+            sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+            sed -i 's/^#\?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' /etc/ssh/sshd_config
+            sed -i 's/^#\?UsePAM.*/UsePAM yes/' /etc/ssh/sshd_config
+            
+            # 添加或更新关键安全配置
+            if ! grep -q "^AuthenticationMethods" /etc/ssh/sshd_config; then
+                echo "AuthenticationMethods publickey" >> /etc/ssh/sshd_config
+            else
+                sed -i 's/^#\?AuthenticationMethods.*/AuthenticationMethods publickey/' /etc/ssh/sshd_config
+            fi
 
             # 密钥配置选项
             echo "SSH 密钥配置："
@@ -554,11 +562,27 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
                     ;;
             esac
 
+            # 测试配置
+            echo "测试 SSH 配置..."
+            if ! sshd -t; then
+                echo "SSH 配置测试失败，恢复默认配置"
+                sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+                systemctl restart sshd
+                exit 1
+            fi
+
+            echo "应用新的 SSH 配置..."
             systemctl restart sshd
 
-            echo "新的 SSH 端口: ${NEW_SSH_PORT}"
-            echo "密码认证已禁用，仅允许密钥登录"
-            echo "=========================="
+            # 验证配置
+            if grep -q "^PasswordAuthentication yes" /etc/ssh/sshd_config; then
+                echo "警告：密码认证仍然启用，配置可能未生效"
+                echo "当前 SSH 配置状态："
+                grep -E "^(PasswordAuthentication|PubkeyAuthentication|AuthenticationMethods)" /etc/ssh/sshd_config
+                exit 1
+            fi
+
+            echo "SSH 配置更新完成：仅允许密钥认证"
             ;;
         2)
             # 启用密码和密钥认证
