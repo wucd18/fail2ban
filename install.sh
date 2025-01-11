@@ -209,10 +209,10 @@ fi
 
 echo "开始安装 Cowrie..."
 
-# Cowrie 配置
+# Cowrie 配置部分
 echo "检查 Cowrie 安装状态..."
 COWRIE_INSTALLED=false
-if [ -d "$COWRIE_INSTALL_DIR" ] && [ -f "$COWRIE_INSTALL_DIR/cowrie-env/bin/cowrie" ]; then
+if [ -d "$COWRIE_INSTALL_DIR" ] && [ -f "$COWRIE_INSTALL_DIR/bin/cowrie" ]; then
     echo "检测到现有 Cowrie 安装，检查完整性..."
     if [ -f "/etc/systemd/system/cowrie.service" ] && [ -d "$COWRIE_INSTALL_DIR/var/log/cowrie" ]; then
         COWRIE_INSTALLED=true
@@ -222,52 +222,50 @@ fi
 
 if [ "$COWRIE_INSTALLED" = "false" ]; then
     echo "开始安装 Cowrie..."
-    # 创建 Cowrie 用户和目录
-    echo "创建 Cowrie 用户和目录..."
+    
+    # 创建 Cowrie 用户
+    echo "创建 Cowrie 用户..."
     if ! id cowrie &>/dev/null; then
-        useradd -r -m -d "$COWRIE_INSTALL_DIR" -s /bin/bash cowrie || {
+        useradd -r -d "$COWRIE_INSTALL_DIR" -s /bin/bash cowrie || {
             echo "创建 cowrie 用户失败"
             exit 1
         }
     fi
 
-    # 清理并创建目录
+    # 准备目录
+    echo "准备安装目录..."
     rm -rf "$COWRIE_INSTALL_DIR"
     mkdir -p "$COWRIE_INSTALL_DIR"
-    mkdir -p "$COWRIE_INSTALL_DIR/var/log/cowrie"
-    chown -R cowrie:cowrie "$COWRIE_INSTALL_DIR"
+    chown cowrie:cowrie "$COWRIE_INSTALL_DIR"
 
-    # 克隆仓库
-    echo "克隆 Cowrie 仓库..."
-    cd "$COWRIE_INSTALL_DIR"
-    sudo -u cowrie git clone https://github.com/cowrie/cowrie.git .
-
-    # 配置 Python 环境和安装依赖
-    echo "配置 Python 环境..."
-    sudo -u cowrie python3 -m virtualenv cowrie-env
-    sudo -u cowrie bash -c "
+    # 以 cowrie 用户身份执行安装
+    echo "执行安装..."
+    runuser -l cowrie -c "
+        cd $COWRIE_INSTALL_DIR
+        git clone https://github.com/cowrie/cowrie.git .
+        python3 -m virtualenv cowrie-env
         source cowrie-env/bin/activate
         pip install --upgrade pip
         pip install -r requirements.txt
         cp etc/cowrie.cfg.dist etc/cowrie.cfg
-        deactivate
-    "
-
-    # 配置 Cowrie
-    echo "配置 Cowrie..."
-    sudo -u cowrie bash -c "
-        cd $COWRIE_INSTALL_DIR
         sed -i 's/hostname = svr04/hostname = fake-ssh-server/' etc/cowrie.cfg
         sed -i 's/^#listen_port=2222/listen_port=2222/' etc/cowrie.cfg
         sed -i 's/^#download_limit_size=10485760/download_limit_size=1048576/' etc/cowrie.cfg
-    "
+        mkdir -p var/log/cowrie
+    " || {
+        echo "Cowrie 安装失败"
+        exit 1
+    }
 
-    # 设置权限
+    # 确保权限正确
+    echo "设置权限..."
     chown -R cowrie:cowrie "$COWRIE_INSTALL_DIR"
     chmod -R 755 "$COWRIE_INSTALL_DIR"
+    chmod 700 "$COWRIE_INSTALL_DIR/var/log/cowrie"
 fi
 
-# 更新 Cowrie 服务配置
+# 配置 systemd 服务
+echo "配置 Cowrie 服务..."
 cat <<EOF > /etc/systemd/system/cowrie.service
 [Unit]
 Description=Cowrie SSH Honeypot
@@ -278,17 +276,17 @@ Type=simple
 User=cowrie
 Group=cowrie
 WorkingDirectory=$COWRIE_INSTALL_DIR
-Environment="PATH=$COWRIE_INSTALL_DIR/cowrie-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="PYTHONPATH=$COWRIE_INSTALL_DIR/cowrie-env/lib/python3.9/site-packages"
-ExecStart=$COWRIE_INSTALL_DIR/cowrie-env/bin/python3 $COWRIE_INSTALL_DIR/bin/cowrie start foreground
+Environment="PATH=$COWRIE_INSTALL_DIR/cowrie-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/bin/bash -c 'cd $COWRIE_INSTALL_DIR && source cowrie-env/bin/activate && bin/cowrie start -n'
 Restart=always
-RestartSec=10
+RestartSec=30
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# 重新加载和启动服务
+# 重载并启动服务
 systemctl daemon-reload
 systemctl enable cowrie
 systemctl restart cowrie
@@ -472,24 +470,22 @@ check_service() {
     echo "检查 $service_name 服务状态..."
     
     if ! systemctl is-active --quiet "$service_name"; then
-        echo "服务未运行，查看详细日志..."
+        echo "服务未运行，检查问题..."
         if [ "$service_name" = "cowrie" ]; then
             echo "===== Cowrie 服务状态 ====="
             systemctl status cowrie
-            echo "===== Cowrie 目录权限 ====="
+            echo "===== Cowrie 日志 ====="
+            journalctl -u cowrie --no-pager -n 50
+            echo "===== 进程检查 ====="
+            ps aux | grep cowrie
+            echo "===== 权限检查 ====="
             ls -la "$COWRIE_INSTALL_DIR"
             ls -la "$COWRIE_INSTALL_DIR/bin"
-            ls -la "$COWRIE_INSTALL_DIR/cowrie-env/bin"
-            echo "===== Cowrie 日志 ====="
-            tail -n 50 "$COWRIE_INSTALL_DIR/var/log/cowrie/cowrie.log" 2>/dev/null || echo "无法读取日志"
-            echo "===== Python 版本 ====="
-            sudo -u cowrie "$COWRIE_INSTALL_DIR/cowrie-env/bin/python3" -V
-            echo "===== 系统日志 ====="
-            journalctl -u cowrie --no-pager -n 50
+            echo "===== Python 环境 ====="
+            runuser -l cowrie -c "cd $COWRIE_INSTALL_DIR && source cowrie-env/bin/activate && python3 -V"
         fi
         return 1
     fi
-    
     echo "$service_name 服务运行正常"
     return 0
 }
