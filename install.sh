@@ -430,17 +430,45 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
 
     # 防火墙配置
     setup_firewall() {
-        command -v ufw >/dev/null 2>&1 || return 0
+        command -v ufw >/dev/null 2>&1 || {
+            echo "未检测到 UFW 防火墙"
+            return 0
+        }
         
         echo "检测到 UFW 防火墙..."
-        [ "$NEW_SSH_PORT" != "$CURRENT_SSH_PORT" ] || return 0
         
-        read -p "是否配置防火墙规则？[y/N]: " -r SETUP_UFW
-        [[ $SETUP_UFW =~ ^[Yy]$ ]] || return 0
+        # 检查现有规则
+        local current_rules=$(ufw status numbered | grep -E "22/tcp|2222/tcp|$NEW_SSH_PORT/tcp")
+        echo "现有防火墙规则:"
+        echo "$current_rules"
         
-        ufw allow "$NEW_SSH_PORT"/tcp comment 'SSH'
-        ufw allow 2222/tcp comment 'Cowrie Honeypot'
-        ufw --force enable
+        # 确保 SSH 端口开放
+        if ! ufw status | grep -q "$NEW_SSH_PORT/tcp"; then
+            echo "添加 SSH 端口 $NEW_SSH_PORT 到防火墙规则..."
+            ufw allow "$NEW_SSH_PORT"/tcp comment 'SSH'
+            [ "$NEW_SSH_PORT" != "22" ] && [ "$CURRENT_SSH_PORT" = "22" ] && ufw delete allow 22/tcp
+        fi
+        
+        # 确保蜜罐端口开放
+        if ! ufw status | grep -q "2222/tcp"; then
+            echo "添加蜜罐端口 2222 到防火墙规则..."
+            ufw allow 2222/tcp comment 'Cowrie Honeypot'
+        fi
+        
+        # 如果防火墙未启用，询问是否启用
+        if ! ufw status | grep -q "Status: active"; then
+            read -p "防火墙当前未启用，是否启用？[y/N]: " -r ENABLE_UFW
+            if [[ $ENABLE_UFW =~ ^[Yy]$ ]]; then
+                echo "启用防火墙..."
+                ufw --force enable
+            else
+                echo "警告：防火墙未启用，请确保手动配置安全规则"
+            fi
+        fi
+        
+        # 显示最终配置
+        echo "当前防火墙状态和规则："
+        ufw status verbose
     }
 
     setup_firewall
@@ -510,6 +538,18 @@ echo "配置总结："
 [ -n "$TEMP_KEY_FILE" ] && echo "- SSH 密钥位置: $TEMP_KEY_FILE"
 echo "- Cowrie 端口: 2222"
 echo "- 日志位置: $COWRIE_INSTALL_DIR/var/log/cowrie/"
+
+# 添加防火墙状态检查
+if command -v ufw >/dev/null 2>&1; then
+    echo "防火墙状态："
+    if ufw status | grep -q "Status: active"; then
+        echo "- UFW 已启用"
+        echo "- SSH 端口状态: $(ufw status | grep -E "$NEW_SSH_PORT/tcp" || echo "未开放")"
+        echo "- 蜜罐端口状态: $(ufw status | grep "2222/tcp" || echo "未开放")"
+    else
+        echo "警告：UFW 防火墙未启用"
+    fi
+fi
 
 if [ "$SERVICES_STATUS" != "OK" ]; then
     echo "提示：使用以下命令查看详细日志："
