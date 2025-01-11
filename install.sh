@@ -400,8 +400,25 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
             sed -i 's/^#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
             sed -i 's/^PubkeyAuthentication no/PubkeyAuthentication yes/' /etc/ssh/sshd_config
 
-            # 配置 SSH 密钥
-            setup_ssh_key "generate"
+            # 添加密钥选择选项
+            echo "SSH 密钥配置："
+            echo "1) 使用现有公钥"
+            echo "2) 自动生成新密钥对"
+            read -p "请选择 [1/2] (默认: 1): " KEY_CHOICE
+            KEY_CHOICE=${KEY_CHOICE:-1}
+
+            case $KEY_CHOICE in
+                1)
+                    setup_ssh_key "import"
+                    ;;
+                2)
+                    setup_ssh_key "generate"
+                    ;;
+                *)
+                    echo "无效的选择！使用现有公钥"
+                    setup_ssh_key "import"
+                    ;;
+            esac
 
             # 重启 SSH 服务
             systemctl restart sshd
@@ -455,16 +472,51 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
 fi
 
 # 检查服务状态
-if systemctl is-active --quiet cowrie && systemctl is-active --quiet fail2ban; then
-    echo "所有组件安装完成！Fail2Ban 和 Cowrie 蜜罐服务已成功启动。"
-else 
-    echo "服务启动失败，请检查系统日志"
-    exit 1
+echo "检查服务状态..."
+SERVICES_STATUS="OK"
+
+# 检查 Cowrie 状态
+if ! systemctl is-active --quiet cowrie; then
+    echo "警告: Cowrie 服务未启动，尝试启动..."
+    systemctl start cowrie
+    sleep 2
+    if ! systemctl is-active --quiet cowrie; then
+        echo "错误: Cowrie 服务启动失败"
+        echo "Cowrie 日志:"
+        journalctl -u cowrie --no-pager -n 20
+        SERVICES_STATUS="ERROR"
+    fi
 fi
 
+# 检查 fail2ban 状态
+if ! systemctl is-active --quiet fail2ban; then
+    echo "警告: fail2ban 服务未启动，尝试启动..."
+    systemctl start fail2ban
+    sleep 2
+    if ! systemctl is-active --quiet fail2ban; then
+        echo "错误: fail2ban 服务启动失败"
+        echo "fail2ban 日志:"
+        journalctl -u fail2ban --no-pager -n 20
+        SERVICES_STATUS="ERROR"
+    fi
+fi
+
+# 最终状态报告
 echo "==== 安装完成 ===="
+if [ "$SERVICES_STATUS" = "OK" ]; then
+    echo "所有服务运行正常！"
+else
+    echo "警告：部分服务可能未正常运行，请检查上述日志"
+fi
+
 echo "配置总结："
 [ "$NEW_SSH_PORT" != "$CURRENT_SSH_PORT" ] && echo "- 新 SSH 端口: $NEW_SSH_PORT"
 [ -n "$TEMP_KEY_FILE" ] && echo "- SSH 密钥位置: $TEMP_KEY_FILE"
 echo "- Cowrie 端口: 2222"
 echo "- 日志位置: $COWRIE_INSTALL_DIR/var/log/cowrie/"
+
+if [ "$SERVICES_STATUS" != "OK" ]; then
+    echo "提示：使用以下命令查看详细日志："
+    echo "journalctl -u cowrie -f"
+    echo "journalctl -u fail2ban -f"
+fi
