@@ -14,7 +14,12 @@ bash <(curl -sL https://raw.githubusercontent.com/CurtisLu1/backtrace/main/insta
 
 - Debian/Ubuntu 系统
 - Root 权限
-- Python 3.x
+- Python 3.x（如遇兼容性问题会自动安装 Python 3.7）
+
+### 常见问题
+
+#### Python 依赖问题
+如果安装过程中遇到 Python 相关的依赖错误，脚本会自动安装兼容版本的 Python 3.7 来解决此问题。这不会影响您系统中的其他 Python 程序。
 
 ## 功能特点
 
