@@ -208,6 +208,16 @@ if ! check_python_version; then
     fix_python_deps
 fi
 
+# 检查 netstat 命令
+if ! command -v netstat &> /dev/null; then
+    echo "netstat 命令未找到，正在安装 net-tools..."
+    apt install -y net-tools || {
+        echo "net-tools 安装失败"
+        exit 1
+    }
+    echo "net-tools 安装完成"
+fi
+
 # 系统依赖安装和 Python 环境检查
 echo "安装依赖..."
 apt install -y fail2ban python3-virtualenv git curl netstat-nat || {
