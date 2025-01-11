@@ -142,23 +142,49 @@ fi
 
 # 安装 Cowrie 蜜罐
 echo "安装 Cowrie 蜜罐..."
+rm -rf "$COWRIE_INSTALL_DIR" # 确保目录干净
 if ! git clone https://github.com/cowrie/cowrie.git "$COWRIE_INSTALL_DIR"; then
     echo "安装 Cowrie 蜜罐失败！"
     exit 1
 fi
 
-# 进入 Cowrie 目录并配置
-cd "$COWRIE_INSTALL_DIR" || exit 1
-python3 -m virtualenv cowrie-env
-source cowrie-env/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-cp etc/cowrie.cfg.dist etc/cowrie.cfg
+echo "配置 Cowrie 环境..."
+cd "$COWRIE_INSTALL_DIR" || {
+    echo "无法进入 Cowrie 目录！"
+    exit 1
+}
 
-# 修改 Cowrie 配置
-sed -i 's/^#download_limit_size=10485760/download_limit_size=1048576/' etc/cowrie.cfg
+# 设置虚拟环境
+python3 -m virtualenv cowrie-env || {
+    echo "创建虚拟环境失败！"
+    exit 1
+}
+
+# 激活虚拟环境并安装依赖
+. cowrie-env/bin/activate || {
+    echo "激活虚拟环境失败！"
+    exit 1
+}
+
+echo "安装 Python 依赖..."
+pip install --upgrade pip || {
+    echo "升级 pip 失败！"
+    exit 1
+}
+
+pip install -r requirements.txt || {
+    echo "安装依赖失败！"
+    exit 1
+}
+
+# 配置 Cowrie
+echo "配置 Cowrie..."
+cp etc/cowrie.cfg.dist etc/cowrie.cfg
 sed -i 's/hostname = svr04/hostname = fake-ssh-server/' etc/cowrie.cfg
 sed -i 's/^#listen_port=2222/listen_port=2222/' etc/cowrie.cfg
+sed -i 's/^#download_limit_size=10485760/download_limit_size=1048576/' etc/cowrie.cfg
+
+deactivate
 
 # 配置 Cowrie 服务
 echo "配置 Cowrie 服务..."
