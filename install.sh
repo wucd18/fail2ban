@@ -68,9 +68,47 @@ done
     exit 1
 }
 
-# 系统更新和依赖安装
-echo "更新系统并安装依赖..."
-apt update && apt upgrade -y
+# 添加系统源更新函数
+update_sources() {
+    local os_version
+    if [ -f /etc/debian_version ]; then
+        os_version=$(cat /etc/debian_version)
+        case $os_version in
+            10*)
+                echo "检测到 Debian 10 (Buster)，更新软件源..."
+                # 备份当前源
+                cp /etc/apt/sources.list /etc/apt/sources.list.backup.$(date +%Y%m%d)
+                # 更新为 Debian 11 源
+                cat > /etc/apt/sources.list <<EOF
+deb http://deb.debian.org/debian bullseye main contrib non-free
+deb http://deb.debian.org/debian bullseye-updates main contrib non-free
+deb http://security.debian.org/debian-security bullseye-security main contrib non-free
+EOF
+                echo "已更新软件源为 Debian 11 (Bullseye)"
+                ;;
+        esac
+    fi
+}
+
+# 在环境检查后，系统更新前添加
+echo "检查系统软件源..."
+update_sources
+
+# 系统依赖安装和 Python 环境检查
+echo "安装依赖..."
+apt install -y fail2ban python3-virtualenv git curl netstat-nat || {
+    echo "依赖安装失败，请检查系统配置"
+    exit 1
+}
+
+# 检查 Python 环境
+if ! python3 -c "import distutils" 2>/dev/null; then
+    echo "正在安装 Python 兼容环境..."
+    apt install -y python3.7 python3.7-distutils
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.7 1
+fi
+
+apt upgrade -y
 apt install -y fail2ban python3-virtualenv git curl netstat-nat
 
 # Fail2ban 配置
