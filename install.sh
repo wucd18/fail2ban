@@ -147,7 +147,18 @@ if ! git clone https://github.com/cowrie/cowrie.git "$COWRIE_INSTALL_DIR"; then
     exit 1
 fi
 
+# 进入 Cowrie 目录并配置
+cd "$COWRIE_INSTALL_DIR" || exit 1
+python3 -m virtualenv cowrie-env
+source cowrie-env/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+cp etc/cowrie.cfg.dist etc/cowrie.cfg
+
+# 修改 Cowrie 配置
 sed -i 's/^#download_limit_size=10485760/download_limit_size=1048576/' etc/cowrie.cfg
+sed -i 's/hostname = svr04/hostname = fake-ssh-server/' etc/cowrie.cfg
+sed -i 's/^#listen_port=2222/listen_port=2222/' etc/cowrie.cfg
 
 # 配置 Cowrie 服务
 echo "配置 Cowrie 服务..."
