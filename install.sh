@@ -113,8 +113,15 @@ apt install -y fail2ban python3-virtualenv git curl netstat-nat
 
 # Fail2ban 配置
 echo "配置 fail2ban..."
-backup_config "/etc/fail2ban/jail.local"
-cat > /etc/fail2ban/jail.local <<'EOF'
+backup_config "/etc/fail2ban/jail.local" || {
+    echo "备份 fail2ban 配置失败"
+    exit 1
+}
+
+cat > /etc/fail2ban/jail.local <<'EOF' || {
+    echo "写入 fail2ban 配置失败"
+    exit 1
+}
 [DEFAULT]
 bantime = 86400
 findtime = 300
@@ -126,19 +133,45 @@ enabled = true
 logpath = /var/log/auth.log
 EOF
 
-systemctl restart fail2ban
+echo "重启 fail2ban 服务..."
+systemctl restart fail2ban || {
+    echo "fail2ban 服务重启失败"
+    exit 1
+}
 
+echo "fail2ban 配置完成"
+
+# 日志清理脚本
 echo "创建日志清理脚本..."
+cat > "$CLEANUP_LOG_SCRIPT" <<'EOL' || {
+    echo "创建日志清理脚本失败"
+    exit 1
+}
+#!/bin/bash
+find /var/log -type f -name "*.log" -mtime +30 -exec rm -f {} \;
+echo "$(date): Logs older than 30 days have been deleted." >> /var/log/cleanup.log
+EOL
 
-# 配置定时任务清理日志 (确保幂等性)
-LOG_DIR="/var/log"
-CRON_TASK="$CRON_SCHEDULE $CLEANUP_LOG_SCRIPT"
+chmod +x "$CLEANUP_LOG_SCRIPT" || {
+    echo "设置日志清理脚本权限失败"
+    exit 1
+}
+
+echo "日志清理脚本创建完成"
+
+# 配置定时任务
+echo "配置定时任务..."
 if ! crontab -l | grep -q "$CLEANUP_LOG_SCRIPT"; then
-    (crontab -l 2>/dev/null; echo "$CRON_TASK") | crontab -
-    echo "$(date): Logs older than ${RETENTION_DAYS} days have been deleted." >> /var/log/cleanup.log
+    (crontab -l 2>/dev/null; echo "$CRON_SCHEDULE $CLEANUP_LOG_SCRIPT") | crontab - || {
+        echo "配置定时任务失败"
+        exit 1
+    }
+    echo "定时任务已配置"
 else
-    echo "定时任务清理日志已存在，无需重复配置。"
+    echo "定时任务已存在"
 fi
+
+echo "开始安装 Cowrie..."
 
 # 安装 Cowrie 蜜罐
 echo "安装 Cowrie 蜜罐..."
