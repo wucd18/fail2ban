@@ -94,8 +94,20 @@ LOG_RETENTION_DAYS=30
 CLEANUP_LOG_SCRIPT="/usr/local/bin/cleanup_logs.sh"
 CRON_SCHEDULE="0 2 * * *"  # 修正 cron 表达式
 
+# 在开始时先检查并安装 net-tools
+echo "检查 netstat 命令..."
+if ! command -v netstat &> /dev/null; then
+    echo "netstat 命令未找到，正在安装 net-tools..."
+    apt update
+    apt install -y net-tools || {
+        echo "net-tools 安装失败"
+        exit 1
+    }
+    echo "net-tools 安装完成"
+fi
+
 # 环境检查
-for cmd in apt systemctl netstat grep awk; do
+for cmd in apt systemctl grep awk; do
     check_command "$cmd"
 done
 
