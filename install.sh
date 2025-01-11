@@ -91,20 +91,21 @@ get_python_version() {
     echo "$py_version"
 }
 
-# 添加防火墙规则检查函数（在函数定义部分添加）
+# 修改防火墙规则检查函数
 check_ufw_rule() {
     local port="$1"
     local comment="$2"
     
-    # 检查所有可能的端口规则格式
-    if ufw status | grep -qE "^($port/tcp|$port|$port/tcp \(v6\))"; then
-        # 如果指定了注释，检查是否匹配
+    # 检查所有可能的规则格式（包括带注释和不带注释的）
+    if ufw status | grep -qE "^($port(/tcp)?|$port(/tcp)? \(v6\))\s+ALLOW"; then
+        # 如果指定了注释，检查是否有带注释的规则
         if [ -n "$comment" ]; then
-            if ufw status | grep -E "^($port/tcp|$port)" | grep -q "$comment"; then
+            if ufw status | grep -E "^$port(/tcp)?\s+.*#.*$comment" >/dev/null; then
                 echo "端口 $port 已配置 ($comment)"
                 return 0
             fi
-            # 端口存在但注释不匹配，返回 2
+            # 存在端口但没有指定注释
+            echo "端口 $port 已存在其他规则"
             return 2
         else
             echo "端口 $port 已配置"
@@ -584,17 +585,23 @@ if [ "$SSH_CONFIGURED" != "true" ]; then
         local ufw_status=$(ufw status | grep "Status: " | cut -d' ' -f2)
         echo "当前防火墙状态: $ufw_status"
         
-        # 检查新 SSH 端口规则
-        check_ufw_rule "$NEW_SSH_PORT" "SSH"
-        local port_status=$?
-        if [ "$port_status" -eq 1 ]; then
+        # 检查并添加 SSH 端口规则
+        local ssh_rule_exists=false
+        if check_ufw_rule "$NEW_SSH_PORT" "SSH"; then
+            echo "SSH 端口 $NEW_SSH_PORT 已配置正确规则"
+            ssh_rule_exists=true
+        elif check_ufw_rule "$NEW_SSH_PORT" ""; then
+            echo "端口 $NEW_SSH_PORT 已存在，但没有 SSH 标记"
+            read -p "是否重新添加带 SSH 标记的规则？[y/N]: " -r ADD_SSH_MARK
+            if [[ $ADD_SSH_MARK =~ ^[Yy]$ ]]; then
+                ufw delete allow $NEW_SSH_PORT
+                ufw allow "$NEW_SSH_PORT"/tcp comment 'SSH'
+                echo "更新了 SSH 端口规则"
+            fi
+            ssh_rule_exists=true
+        else
             echo "添加新 SSH 端口 $NEW_SSH_PORT 到防火墙规则..."
             ufw allow "$NEW_SSH_PORT"/tcp comment 'SSH'
-        elif [ "$port_status" -eq 2 ]; then
-            echo "端口 $NEW_SSH_PORT 已存在其他规则，添加新规则..."
-            ufw allow "$NEW_SSH_PORT"/tcp comment 'SSH'
-        else
-            echo "SSH 端口 $NEW_SSH_PORT 规则已存在"
         fi
         
         # 检查原 SSH 端口规则（如果不同）
